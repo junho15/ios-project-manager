@@ -1,13 +1,13 @@
 # 프로젝트 매니저
 
 ## 목차
-1. [소개](#소개)
-2. [팀원](#팀원)
-3. [타임라인](#타임라인)
-4. [UML](#UML)
-5. [실행 화면](#실행-화면)
-6. [트러블 슈팅](#트러블-슈팅)
-7. [참고 링크](#참고-링크)
+1. [소개](#-소개)
+2. [팀원](#-팀원)
+3. [타임라인](#-타임라인)
+4. [UML](#-UML)
+5. [실행 화면](#-실행-화면)
+6. [트러블 슈팅](#-트러블-슈팅)
+7. [참고 링크](#-참고-링크)
 
 ## 소개
     
@@ -70,22 +70,51 @@
     * 프로퍼티 private 키워드 추가 및 text 설정 메서드 추가
     * 접근 제어자 추가 및 줄바꿈 등 컨벤션 수정
     * viewModel을 class로 변경하고 bind 메서드 수정
+* **22/01/20**
     * 필요한 경우(파라미터와 프로퍼티의 이름이 같은 경우) 제외 모든 self 제거
+
+</div>
+</details>
+
+<details>
+<summary>STEP 3</summary>
+<div markdown="1">
+
+* **22/01/27**
+    * DatabaseManager 추가
+    * ViewModel에 DatabaseManager 추가
+    * PersistenceManager, DataModel 추가
+    * ViewModel에 PersistenceManager 추가
+    * ProjectTodoHistory 추가
+    * ProjectTodoHistoryViewModel 및 관련 기능 추가
+    * ProjectTodoHistoryViewController 및 관련 기능 추가
+    * 되돌리기 기능 추가
+    * 지역화(localization) 한국어 구현
+    * UserNotificationsManger 추가 및 기능 구현
+* **22/01/28**
+    * NetworkMonitorManager 추가 및 관련 기능 구현
+    * refactor: 컨벤션 수정
 
 </div>
 </details>
 
 ## UML
 
-![UML](https://camo.githubusercontent.com/23214ded041a7a061a1f72fa0a0c0639d8a8d305d6320acc90f936d7e0efd051/68747470733a2f2f692e696d6775722e636f6d2f5a3363673777442e6a7067)
+![UML](https://i.imgur.com/bnWoywq.jpg)
 
 ## 실행 화면
 
-| ![](https://i.imgur.com/TTEsnbH.png) | ![](https://i.imgur.com/INOnJ0E.png) |
+| **메인 - 할일 목록 조회** | **할일 추가/수정** |
 |:---:|:---:|
+| ![](https://i.imgur.com/TTEsnbH.png) | ![](https://i.imgur.com/INOnJ0E.png) |
+| **할일 삭제** | **할일 이동** |
 | ![](https://i.imgur.com/U2LIeSk.png) | ![](https://i.imgur.com/pE9nH19.png) |
+| **History 기능** | **로컬 노티피케이션** |
+| ![](https://i.imgur.com/08PcjW5.png) | ![](https://i.imgur.com/B9EwBiJ.png) |
+| **Undo/Redo 기능** | **지역화/네트워크 연결 확인** |
+| ![](https://i.imgur.com/L91zBov.gif) | ![](https://i.imgur.com/lZC82yX.png) |
 
-## 트러블 슈팅
+## 고민한 점 & 트러블 슈팅
 
 ### 기술스택 선택하기
 
@@ -206,6 +235,84 @@
 </details>
     
     
+### 네트워크에 연결 확인 및 리모트 동기화
+
+<details>
+<summary>내용 보기</summary>
+<div markdown="1">
+
+* 네트워크 연결 확인을 어떻게 구현할 지 고민했는 데 `NWPathMonitor`를 활용해서 관련 기능을 구현할 수 있었습니다.
+
+```swift
+final class NetworkMonitorManager {
+    private let monitor = NWPathMonitor()
+    var currentStatus: NWPath.Status {
+        monitor.currentPath.status
+    }
+    var lastStatus = NWPath.Status.satisfied
+
+    func startMonitoring(statusUpdateHandler: @escaping (NWPath.Status) -> Void) {
+        monitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                statusUpdateHandler(path.status)
+                self?.lastStatus = path.status
+            }
+        }
+        monitor.start(queue: DispatchQueue.global())
+    }
+
+    func stopMonitoring() {
+        monitor.cancel()
+    }
+}
+
+final class ProjectTodoListViewModel {
+    ...
+    private let networkMonitorManager = NetworkMonitorManager()
+    ...
+    private func configureNetworkMonitoring() {
+        networkMonitorManager.startMonitoring { [weak self] status in
+            guard let self else { return }
+            self.onUpdatedNetworkStatus(status == .satisfied)
+            let reconnectedNetwork = self.networkMonitorManager.lastStatus != .satisfied && status == .satisfied
+            if reconnectedNetwork {
+                self.databaseManager.updateAll(self.projectTodos)
+            }
+        }
+    }    
+```
+
+* 위 코드처럼 `NetworkmonitorManager`를 만들어서 네트워크 변경사항을 모니터링하고 대응할 수 있도록 했습니다.
+* 네트워크 연결이 끊어졌다가 다시 연결되면 `ViewController`에 알려 네트워크 연결 안됨 표시를 숨기고, 현재 `ViewModel`의 프로젝트 할일 내역을 서버에 업데이트 하도록 했습니다.
+    
+</div>
+</details>
+
+### 네트워크에 연결되어있지 않다는 것을 사용자에게 알리는 UI/UX
+
+<details>
+<summary>내용 보기</summary>
+<div markdown="1">
+
+* 네트워크 연결이 끊어졌을 때 어떤 방법으로 사용자에게 알려주는 게 좋을지 고민했습니다. 
+* 네트워크 연결이 반드시 필요한 앱일 경우 연결이 끊어짐을 알리는 내용으로 화면 전체를 가리거나 알림을 띄우는 방법을 사용하는 걸 확인했습니다.
+
+| ![](https://i.imgur.com/zXVJHFg.png) | ![](https://i.imgur.com/ZAkWg4q.png) |
+|:---:|:---:|
+
+* 프로젝트 매니저는 오프라인 상태에서도 사용할 수 있어야해서 위 방법은 배제했습니다. 카카오톡의 경우 오프라인 상태이면 상단에 안내 문구가 보이도록 하는 걸 참고했습니다.
+
+| ![](https://i.imgur.com/QVyQXZJ.png) | ![](https://i.imgur.com/9fYwpEs.png) |
+|:---:|:---:|
+
+* 프로젝트 매니저에는 Undo / Redo 버튼을 포함하고 있는 하단 뷰에 공간이 충분했기 때문에 왼쪽 하단에 네트워크 연결이 끊어짐을 알리는 문구가 나타나도록 했습니다.
+
+| ![](https://i.imgur.com/T5ivfTz.png) |
+|:---:|
+    
+</div>
+</details>
+    
 ## 참고링크
 
 * [Core Data](https://developer.apple.com/documentation/coredata)
@@ -215,3 +322,8 @@
 * [MVC 디자인 패턴 in iOS](https://velog.io/@ictechgy/MVC-%EB%94%94%EC%9E%90%EC%9D%B8-%ED%8C%A8%ED%84%B4)
 * [MVVM 디자인 패턴 in iOS](https://velog.io/@ictechgy/MVVM-%EB%94%94%EC%9E%90%EC%9D%B8-%ED%8C%A8%ED%84%B4)
 * [MVVM 디자인 패턴](https://wnstkdyu.github.io/2018/04/20/mvvmdesignpattern/)
+* [Displaying transient content in a popover](https://developer.apple.com/documentation/uikit/windows_and_screens/displaying_transient_content_in_a_popover)
+* [NWPathMonitor](https://developer.apple.com/documentation/network/nwpathmonitor)
+* [UndoManager](https://developer.apple.com/documentation/foundation/undomanager#1663976)
+* [Scheduling a notification locally from your app](https://developer.apple.com/documentation/usernotifications/scheduling_a_notification_locally_from_your_app)
+* [Localization](https://developer.apple.com/documentation/xcode/localization)
